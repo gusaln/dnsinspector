@@ -66,7 +66,7 @@ func unpackLabels(r *answerReader) string {
 	return strings.Join(labels, ".")
 }
 
-func ParsedAnswer(buf []byte) (*Response, error) {
+func ParsedResponse(buf []byte) (*Response, error) {
 	domainIndex := make(map[int]string)
 	r := answerReader{
 		cursor:      0,
