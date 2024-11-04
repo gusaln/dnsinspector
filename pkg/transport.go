@@ -1,6 +1,13 @@
 package pkg
 
-import "net"
+import (
+	"errors"
+	"net"
+)
+
+const UDP_OCTET_SIZE_LIMIT = 512
+
+var ErrMessageTooLong = errors.New("message is more than 512 bytes long")
 
 func SendQuery(server string, query *Query) (*Response, error) {
 	conn, err := net.Dial("udp", server+":53")
@@ -11,6 +18,10 @@ func SendQuery(server string, query *Query) (*Response, error) {
 	defer conn.Close()
 
 	msg := query.AsBytes()
+	if len(msg) > UDP_OCTET_SIZE_LIMIT {
+		return nil, ErrMessageTooLong
+	}
+
 	if _, err = conn.Write(msg); err != nil {
 		return nil, err
 	}

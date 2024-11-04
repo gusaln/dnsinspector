@@ -34,10 +34,7 @@ func (r *answerReader) get(from, to int) []byte {
 	return r.buf[from:to]
 }
 
-const POINTER_MARKER = 0b11000000
-const OFFSET_MASK = 0b0011111111111111
-
-func unpackLabels(r *answerReader) string {
+func (r *answerReader) unpackLabels() string {
 	labels := make([]string, 0, 8)
 	offsets := make([]int, 0, 8)
 
@@ -65,6 +62,83 @@ func unpackLabels(r *answerReader) string {
 
 	return strings.Join(labels, ".")
 }
+
+func (r *answerReader) parseRecord() (*Record, error) {
+	name := r.unpackLabels()
+
+	rtype := RecordType(binary.BigEndian.Uint16(r.next(2)))
+	rclass := RecordClass(binary.BigEndian.Uint16(r.next(2)))
+	ttl := binary.BigEndian.Uint32(r.next(4))
+	dataLength := int(binary.BigEndian.Uint16(r.next(2)))
+
+	if rclass != RC_IN {
+		return nil, fmt.Errorf("Record CLASS %d, not supported", rclass)
+	}
+
+	record := &Record{
+		Name:   name,
+		Rtype:  rtype,
+		Rclass: rclass,
+		Ttl:    ttl,
+		Data:   map[string]interface{}{},
+	}
+
+	switch record.Rtype {
+	case RT_A:
+		rawdata := r.next(dataLength)
+		record.Data["ip"] = net.IPv4(rawdata[0], rawdata[1], rawdata[2], rawdata[3])
+	case RT_NS:
+		record.Data["ns"] = r.unpackLabels()
+	case RT_MD:
+		record.Data["mailbox"] = r.unpackLabels()
+	case RT_MF:
+		record.Data["agent"] = r.unpackLabels()
+	case RT_CNAME:
+		record.Data["name"] = r.unpackLabels()
+	case RT_SOA:
+		record.Data["main"] = r.unpackLabels()
+		record.Data["mailbox"] = r.unpackLabels()
+		record.Data["serial"] = binary.BigEndian.Uint32(r.next(4))
+		record.Data["refresh"] = binary.BigEndian.Uint32(r.next(4))
+		record.Data["retry"] = binary.BigEndian.Uint32(r.next(4))
+		record.Data["expire"] = binary.BigEndian.Uint32(r.next(4))
+		record.Data["minimum"] = binary.BigEndian.Uint32(r.next(4))
+	case RT_MB:
+		record.Data["mailbox"] = r.unpackLabels()
+	case RT_MG:
+		record.Data["mailbox"] = r.unpackLabels()
+	case RT_MR:
+		record.Data["mailbox"] = r.unpackLabels()
+	case RT_NULL:
+		record.Data["raw"] = r.unpackLabels()
+	case RT_WKS:
+		rawdata := r.next(dataLength)
+		record.Data["address"] = net.IPv4(rawdata[0], rawdata[1], rawdata[2], rawdata[3])
+		// see the [RFC 1010](https://datatracker.ietf.org/doc/html/rfc1010)
+		record.Data["protocol"] = rawdata[4]
+		record.Data["bitmap"] = rawdata[4:]
+	case RT_PTR:
+		record.Data["ptr"] = r.unpackLabels()
+	case RT_HINFO:
+		record.Data["info"] = string(r.next(dataLength))
+	case RT_MINFO:
+		record.Data["mailbox"] = r.unpackLabels()
+		record.Data["error_mailbox"] = r.unpackLabels()
+	case RT_MX:
+		record.Data["preference"] = binary.BigEndian.Uint16(r.next(2))
+		record.Data["exchange"] = r.unpackLabels()
+	case RT_TXT:
+		record.Data["data"] = string(r.next(dataLength))
+
+	default:
+		return nil, fmt.Errorf("unknown record type %d", rtype)
+	}
+
+	return record, nil
+}
+
+const POINTER_MARKER = 0b11000000
+const OFFSET_MASK = 0b0011111111111111
 
 func ParsedResponse(buf []byte) (*Response, error) {
 	domainIndex := make(map[int]string)
@@ -100,16 +174,18 @@ func ParsedResponse(buf []byte) (*Response, error) {
 	additionalRecordsCount := binary.BigEndian.Uint16(r.next(2))
 
 	questions := make([]Question, questionCount)
-	answers := make([]Record, answerCount)
+	answersRR := make([]Record, answerCount)
+	authoritativeRR := make([]Record, nsCount)
+	additionalRR := make([]Record, additionalRecordsCount)
 
 	// Questions
 	for i := 0; i < int(questionCount); i++ {
-		name := unpackLabels(&r)
+		name := r.unpackLabels()
 
 		rtype := RecordType(binary.BigEndian.Uint16(r.next(2)))
 		rclass := RecordClass(binary.BigEndian.Uint16(r.next(2)))
 
-		if rclass != IN {
+		if rclass != RC_IN {
 			return nil, fmt.Errorf("Record CLASS %d, not supported", rclass)
 		}
 
@@ -120,54 +196,43 @@ func ParsedResponse(buf []byte) (*Response, error) {
 	}
 
 	// Answers
-	for i := 0; i < int(answerCount+nsCount+additionalRecordsCount); i++ {
-		name := unpackLabels(&r)
-
-		rtype := RecordType(binary.BigEndian.Uint16(r.next(2)))
-		rclass := RecordClass(binary.BigEndian.Uint16(r.next(2)))
-		ttl := binary.BigEndian.Uint32(r.next(4))
-		dataLength := int(binary.BigEndian.Uint16(r.next(2)))
-
-		if rclass != IN {
-			return nil, fmt.Errorf("Record CLASS %d, not supported", rclass)
+	for i := 0; i < int(answerCount); i++ {
+		record, err := r.parseRecord()
+		if err != nil {
+			return nil, fmt.Errorf("could not parse record at %d: %w", r.cursor, err)
 		}
+		answersRR[i] = *record
+	}
 
-		answer := Record{
-			Name:   name,
-			Rtype:  rtype,
-			Rclass: rclass,
-			Ttl:    ttl,
-			Data:   map[string]interface{}{},
+	// Authoritative
+	for i := 0; i < int(nsCount); i++ {
+		record, err := r.parseRecord()
+		if err != nil {
+			return nil, fmt.Errorf("could not parse record at %d: %w", r.cursor, err)
 		}
+		authoritativeRR[i] = *record
+	}
 
-		switch answer.Rtype {
-		case A:
-			rawdata := r.next(dataLength)
-			answer.Data["ip"] = net.IPv4(rawdata[0], rawdata[1], rawdata[2], rawdata[3])
-		case NS:
-			answer.Data["ns"] = unpackLabels(&r)
-		case CNAME:
-			answer.Data["name"] = unpackLabels(&r)
-		case MX:
-			answer.Data["preference"] = binary.BigEndian.Uint16(r.next(2))
-			answer.Data["exchange"] = unpackLabels(&r)
-		default:
-			// To be expanded
-			r.next(dataLength)
+	// Additional
+	for i := 0; i < int(additionalRecordsCount); i++ {
+		record, err := r.parseRecord()
+		if err != nil {
+			return nil, fmt.Errorf("could not parse record at %d: %w", r.cursor, err)
 		}
-
-		answers[i] = answer
+		additionalRR[i] = *record
 	}
 
 	return &Response{
-		ID:                 id,
-		OpCode:             opcode,
-		Authoritative:      authoritativeAnswer,
-		Truncated:          truncated,
-		RecursionDesired:   recursionDesired,
-		RecursionAvailable: recursionAvailable,
-		ResponseCode:       responseCode,
-		Questions:          questions,
-		Answers:            answers,
+		ID:                   id,
+		OpCode:               opcode,
+		IsAuthoritative:      authoritativeAnswer,
+		Truncated:            truncated,
+		RecursionDesired:     recursionDesired,
+		RecursionAvailable:   recursionAvailable,
+		ResponseCode:         responseCode,
+		Questions:            questions,
+		Answers:              answersRR,
+		AuthoritativeRecords: authoritativeRR,
+		AdditionalRecords:    additionalRR,
 	}, nil
 }

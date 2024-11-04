@@ -77,7 +77,7 @@ func (q Query) AsBytes() []byte {
 		// QTYPE
 		msg = binary.BigEndian.AppendUint16(msg, uint16(qstn.Rtype))
 		// QCLASS is always IN = 1
-		msg = binary.BigEndian.AppendUint16(msg, uint16(IN))
+		msg = binary.BigEndian.AppendUint16(msg, uint16(RC_IN))
 	}
 
 	return msg
@@ -104,6 +104,7 @@ type QueryBuilder struct {
 	questions        []Question
 }
 
+// Creates a new QueryBuilder
 func NewQueryBuilder() *QueryBuilder {
 	return &QueryBuilder{
 		questions: make([]Question, 0),
@@ -131,6 +132,7 @@ func (b *QueryBuilder) AddQuestion(domain string, qtype RecordType) *QueryBuilde
 	return b
 }
 
+// Builds the query with a unique ID
 func (b QueryBuilder) Build() *Query {
 	id := [2]byte{}
 	rand.Read(id[:])
@@ -143,4 +145,14 @@ func (b QueryBuilder) Build() *Query {
 		recursionDesired: b.recursionDesired,
 		questions:        b.questions,
 	}
+}
+
+// Creates a new query without recursion
+func NewQuery(domain string, qtype RecordType) *Query {
+	return NewQueryBuilder().AddQuestion(domain, qtype).Build()
+}
+
+// Creates a new query with recursion
+func NewQueryWithRecursion(domain string, qtype RecordType) *Query {
+	return NewQueryBuilder().RecursionDesired().AddQuestion(domain, qtype).Build()
 }
