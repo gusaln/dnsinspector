@@ -6,7 +6,7 @@ This is a work in progress.
 
 ## Description
 
-This tools does health checks of different DNS records by querying different authorities through the [DNS protocol - (RFC1035)](https://datatracker.ietf.org/doc/html/rfc1035).
+This tools does health checks of different DNS records by querying different authorities through the DNS protocol.
 
 ## Checks perform
 
@@ -15,16 +15,13 @@ This tools does health checks of different DNS records by querying different aut
 ## Features
 
 - DNS protocol
-  - [x] Queries and Answers headers
-  - [x] Label support
-  - [x] TCP length header
-  - [ ] Truncated message support
-  - [ ] Records
-    - [x] A
-    - [x] NS
-    - [x] MX
-    - [x] CNAME
-  - [ ] Chaos type (what is this even used for?)
+  - [RFC1035](https://datatracker.ietf.org/doc/html/rfc1035)
+    - [x] Queries and Answers headers
+    - [x] Label support
+    - [x] TCP length header
+    - [x] Record support (A, NS, MX, CNAME, SOA, MB, MG, MR, NULL, WKS, PTR, HINFO, MINFO, TXT)
+    - [ ] Truncated message support
+    - [ ] Chaos type (what is this even used for?)
 
 - Health checks (soon)
 
