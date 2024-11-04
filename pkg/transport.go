@@ -2,8 +2,8 @@ package pkg
 
 import "net"
 
-func SendQuery(domain string, query Query) (*Response, error) {
-	conn, err := net.Dial("udp", domain+":53")
+func SendQuery(server string, query *Query) (*Response, error) {
+	conn, err := net.Dial("udp", server+":53")
 	if err != nil {
 		return nil, err
 	}
